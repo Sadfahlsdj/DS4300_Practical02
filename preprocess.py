@@ -1,12 +1,10 @@
 import os
 from PyPDF2 import PdfReader
 from nltk.corpus import stopwords
-import string
 from nltk.tokenize import word_tokenize, sent_tokenize
-from nltk.stem import WordNetLemmatizer
 import re
-from transformers import AutoTokenizer
-from joblib import Parallel, delayed
+from transformers import AutoTokenizer, AutoModel
+import torch
 
 def extract_text_from_pdf(pdf_path):
     """
@@ -28,6 +26,7 @@ def preprocess_text(text):
 
     text = text.lower()
     text = " ".join(text.split())  # remove extra whitespace
+    text = re.sub(r"[^a-zA-Z0-9\s.,!?]", "", text) # remove non alphanumerics
 
     with open('extra_stopwords.txt') as f:
         extra_stopwords = [l.strip() for l in f.readlines()]  # extra stopwords that show up often
@@ -41,71 +40,98 @@ def preprocess_text(text):
 
 def chunk_text(text, tokenizer, chunk_size=200, overlap=50):
     """
-
+    Chunk the text into smaller pieces - sentence splitting is done here
     :param text: input text
     :param tokenizer: tokenizer to use
-    :param chunk_size: chunk size to chunk into
+    :param chunk_size: chunk size for chunking
     :param overlap: overlap for chunking
-    :return: chunked text
+    :return: input text broken into chunks
     """
-    tokens = tokenizer.encode(text, truncation=False, add_special_tokens=False)
+    # sentence splitting
+    sentences = sent_tokenize(text)
+
+    # tokenize sentences first
+    tokens = []
+    for sentence in sentences:
+        sentence_tokens = tokenizer.encode(sentence, truncation=False, add_special_tokens=False)
+        tokens.extend(sentence_tokens)
+
+    # chunk sentences
     chunks = []
     for i in range(0, len(tokens), chunk_size - overlap):
         chunk = tokens[i:i + chunk_size]
         chunks.append(tokenizer.decode(chunk, skip_special_tokens=True))
+
     return chunks
 
-def preprocess_and_chunk(text, tokenizer_name, chunk_size=200, overlap=50):
+def preprocess_chunk_embed(text, tokenizer_name, chunk_size=200, overlap=50):
     """
-    calls the preprocess & chunking functions on a text block and returns it
-    splits text into sentences first to try to avoid going over the token limit for chunking
+    Calls the preprocess & chunking functions on a text block
+    Returns the original & cleaned chunks, and embeddings of cleaned chunks
+    Splits text into sentences first to try to avoid going over the token limit for chunking.
+    Returns:
+        - original_chunks: List of original text chunks to be returned later by queries
+        - cleaned_chunks: List of preprocessed text chunks
+        - embeddings: List of corresponding embeddings of cleaned chunks for AI stuff
     """
-    # preprocess
-    cleaned_text = preprocess_text(text)
-
-    # split the text into sentences to avoid going above the maximum sequence length as much as possible
-    sentences = sent_tokenize(cleaned_text)
-
-    # create tokenizer to use in chunk_text
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
+    model = AutoModel.from_pretrained(tokenizer_name)
 
-    # parallel processing for better runtime
-    all_chunks = Parallel(n_jobs=4)(  # 4 cpu cores - my mac does not have CUDA cores
-        delayed(chunk_text)(sentence, tokenizer, chunk_size, overlap)
-        for sentence in sentences
-    )
+    original_chunks = chunk_text(text, tokenizer, chunk_size, overlap)
 
-    # flatten list back into 1d
-    return [chunk for sublist in all_chunks for chunk in sublist]
+    # preprocess each chunk individually
+    # needed to ensure same # of chunks for original & preprocessed text
+    cleaned_chunks = []
+    for chunk in original_chunks:
+        cleaned_chunk = preprocess_text(chunk)
+        cleaned_chunks.append(cleaned_chunk)
 
-def preprocess_folder(directory, tokenizer_name, chunk_size=200, overlap=50):
+    # tokenize chunks for embedding
+    inputs = tokenizer(cleaned_chunks, padding=True, truncation=True, return_tensors="pt")
+
+    # Generate embeddings
+    with torch.no_grad():
+        outputs = model(**inputs)
+        embeddings = outputs.last_hidden_state.mean(dim=1)
+
+    # chroma needs embeddings as a numpy array
+    embeddings = embeddings.numpy()
+
+    # make sure chunk len matches
+    if len(original_chunks) != len(cleaned_chunks):
+        raise ValueError(f'Length mismatch: original_chunks ({len(original_chunks)}) != cleaned_chunks ({len(cleaned_chunks)})')
+
+    return original_chunks, cleaned_chunks, embeddings
+
+def process_folder(directory, tokenizer_name, chunk_size=200, overlap=50):
     """
-    run preprocessing_and_chunk on a folder of pdf files
+    Run preprocessing_chunk_embed on a folder of PDF files
     """
-    out = []
+    original, clean, embeddings_all, metadatas = [], [], [], []
 
     for filename in os.listdir(directory):
         if filename.endswith('.pdf'):
             pdf_path = os.path.join(directory, filename)
             text = extract_text_from_pdf(pdf_path)
-            out += preprocess_and_chunk(text, tokenizer_name, chunk_size, overlap)
+            raw_chunks, clean_chunks, embeddings = (
+                preprocess_chunk_embed(text, tokenizer_name, chunk_size, overlap))
+            original.extend(raw_chunks)
+            clean.extend(clean_chunks)
+            embeddings_all.extend(embeddings)  # Add embeddings to the output list
 
-    out = [[''.join(ch for ch in o if (ch.isalnum()) or ch.isspace())] for o in out]
-    return out
+            for chunk in raw_chunks:
+                metadatas.append({
+                    'source': filename,  # Store the source file name
+                    'original_text': chunk  # Store the original text for display
+                })
+
+    return original, clean, embeddings_all, metadatas
 
 def main():
-    # sample usage with preprocess_and_chunk
-    text = 'This is a long document that needs to be split into smaller chunks. ' * 100
-    chunks = preprocess_and_chunk(
-        text,
-        tokenizer_name='sentence-transformers/all-MiniLM-L6-v2',
-        chunk_size=200,
-        overlap=10  # arbitrary values
-    )
-
-    # Print the chunks
-    for i, chunk in enumerate(chunks):
-        print(f'Chunk {i+1}: {chunk}')
+    # sample usage with preprocess_folder (pdf_test folder has a single document)
+    a = process_folder('pdf_test', 'sentence-transformers/all-MiniLM-L6-v2',
+                       200, 10)
+    print(a)
 
 if __name__ == '__main__':
     main()
