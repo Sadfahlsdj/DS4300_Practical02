@@ -22,10 +22,12 @@ def extract_text_from_pdf(pdf_path):
 def preprocess_text(text):
     """
 
+    :param text: input text
+    :return: processed text (remove stopwords, lowercase all, remove extra whitespace)
     """
 
     text = text.lower()
-    text = " ".join(text.split())  # Remove extra whitespace
+    text = " ".join(text.split())  # remove extra whitespace
 
     with open('extra_stopwords.txt') as f:
         extra_stopwords = [l.strip() for l in f.readlines()]  # extra stopwords that show up often
@@ -39,7 +41,12 @@ def preprocess_text(text):
 
 def chunk_text(text, tokenizer, chunk_size=200, overlap=50):
     """
-    Optimized chunking function.
+
+    :param text: input text
+    :param tokenizer: tokenizer to use
+    :param chunk_size: chunk size to chunk into
+    :param overlap: overlap for chunking
+    :return: chunked text
     """
     tokens = tokenizer.encode(text, truncation=False, add_special_tokens=False)
     chunks = []
@@ -50,27 +57,31 @@ def chunk_text(text, tokenizer, chunk_size=200, overlap=50):
 
 def preprocess_and_chunk(text, tokenizer_name, chunk_size=200, overlap=50):
     """
-    Preprocess text, split it into sentences, and chunk each sentence.
+    calls the preprocess & chunking functions on a text block and returns it
+    splits text into sentences first to try to avoid going over the token limit for chunking
     """
-    # Preprocess the text
+    # preprocess
     cleaned_text = preprocess_text(text)
 
-    # Split the text into sentences to avoid going above the maximum sequence length as much as possible
+    # split the text into sentences to avoid going above the maximum sequence length as much as possible
     sentences = sent_tokenize(cleaned_text)
 
-    # Load the tokenizer
+    # create tokenizer to use in chunk_text
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
 
-    # Process sentences in parallel
-    all_chunks = Parallel(n_jobs=4)(  # Use 4 CPU cores
+    # parallel processing for better runtime
+    all_chunks = Parallel(n_jobs=4)(  # 4 cpu cores - my mac does not have CUDA cores
         delayed(chunk_text)(sentence, tokenizer, chunk_size, overlap)
         for sentence in sentences
     )
 
-    # Flatten the list of chunks
+    # flatten list back into 1d
     return [chunk for sublist in all_chunks for chunk in sublist]
 
 def preprocess_folder(directory, tokenizer_name, chunk_size=200, overlap=50):
+    """
+    run preprocessing_and_chunk on a folder of pdf files
+    """
     out = []
 
     for filename in os.listdir(directory):
@@ -83,18 +94,18 @@ def preprocess_folder(directory, tokenizer_name, chunk_size=200, overlap=50):
     return out
 
 def main():
-    # Example usage
-    text = "This is a long document that needs to be split into smaller chunks. " * 100
+    # sample usage with preprocess_and_chunk
+    text = 'This is a long document that needs to be split into smaller chunks. ' * 100
     chunks = preprocess_and_chunk(
         text,
-        tokenizer_name="sentence-transformers/all-MiniLM-L6-v2",
+        tokenizer_name='sentence-transformers/all-MiniLM-L6-v2',
         chunk_size=200,
-        overlap=10  # Reduced overlap for faster processing
+        overlap=10  # arbitrary values
     )
 
     # Print the chunks
     for i, chunk in enumerate(chunks):
-        print(f"Chunk {i+1}: {chunk}")
+        print(f'Chunk {i+1}: {chunk}')
 
 if __name__ == '__main__':
     main()
