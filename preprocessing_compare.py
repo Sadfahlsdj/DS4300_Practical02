@@ -1,6 +1,6 @@
 import time
 import tracemalloc
-from preprocess import preprocess_folder
+from preprocess import process_folder
 import pandas as pd
 
 def measure_performance(directory, tokenizer_name, chunk_size, overlap):
@@ -14,7 +14,7 @@ def measure_performance(directory, tokenizer_name, chunk_size, overlap):
     start_time = time.time()
 
     # Run the preprocessing function
-    chunks = preprocess_folder(directory, tokenizer_name, chunk_size, overlap)
+    chunks = process_folder(directory, tokenizer_name, chunk_size, overlap)
 
     # Stop timing
     end_time = time.time()

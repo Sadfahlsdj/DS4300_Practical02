@@ -2,6 +2,7 @@ import chromadb
 from chromadb.config import Settings
 from preprocess import extract_text_from_pdf, process_folder
 import os
+import ollama
 
 # Step 1: Connect to the ChromaDB server running in Docker
 def load_collection(collection_name):
@@ -10,7 +11,6 @@ def load_collection(collection_name):
         chroma_server_http_port='8000'   # default Chroma port is 8000, but I set this to 8000 too
     ))
 
-    # Step 2: Create or load a collection
     collection = client.get_or_create_collection(name=collection_name)
     return collection
 
@@ -36,9 +36,7 @@ def insert_folder(collection, folder, tokenizer_name, chunk_size, overlap):
     """
     raw_docs, chunked_docs, embeddings, metadatas = (
         process_folder(folder, tokenizer_name, chunk_size, overlap))
-    print(f'{embeddings[0].shape} {len(chunked_docs)}')
     ids = [f"doc{i}" for i in range(len(chunked_docs))]
-
     insert_documents(collection, ids, chunked_docs, embeddings, metadatas)
 
 # Step 4: Query the collection
@@ -50,19 +48,36 @@ def query_db(query, n_results, collection):
     :param collection: link to the database collection
     :return: results of query, only includes metadatas (raw text) for readability
     """
-    query_results = collection.query(
-        query_texts=query,
-        n_results=n_results,
-        include=['metadatas'] # metadata has the raw text so it's the most useful to us
+    all_documents = collection.get(
+        include=['metadatas', 'documents']
     )
 
-    return query_results
+    # get all documents
+    context = " ".join(all_documents['documents'])
+    documents = all_documents['documents']
+
+    prompt = (f"Use the following context to answer the question. "
+              f"Context: {context}. Question: {query[0]}. Answer:")
+
+    response = ollama.generate(
+        model="llama2",  # model goes here - mistral, llama2, etc
+        prompt=prompt
+    )
+
+    # query_results = collection.query(
+    #     query_texts=query,
+    #     n_results=n_results,
+    #     include=['metadatas'] # metadata has the raw text so it's the most useful to us
+    # )
+    #
+    # return query_results
+    return response['response']
 
 def main():
     # example usage
     # untested on a folder with >1 document inside but I am going crazy doing this already
     coll = load_collection('ds4300_p2')
-    insert_folder(coll, 'pdf_test', 'sentence-transformers/all-MiniLM-L6-v2',
+    insert_folder(coll, 'pdf_files', 'sentence-transformers/all-MiniLM-L6-v2',
                           200, 10)
 
     response = query_db(['What are the benefits of a relational model'], 1, coll)
