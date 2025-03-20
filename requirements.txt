@@ -1,0 +1,8 @@
+PyPDF2
+nltk
+torch
+transformers
+chromadb
+ollama
+redis
+faiss-cpu
