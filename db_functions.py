@@ -6,9 +6,12 @@ import ollama
 import redis
 import faiss # third vector db
 import numpy as np
+from transformers import AutoTokenizer, AutoModel
 
 # connect to chroma server, returns the collection
-def load_collection(collection_name, db_type):
+def load_collection(collection_name, db_type, tokenizer):
+    model = AutoModel.from_pretrained(tokenizer)
+    embedding_size = model.config.hidden_size # get embedding size of tokenizer
     if db_type.lower() == 'chroma':
         client = chromadb.Client(Settings(
             chroma_server_host='localhost',  # need this
@@ -23,7 +26,7 @@ def load_collection(collection_name, db_type):
         return client
 
     elif db_type.lower() == 'faiss':
-        dimension = 384  # adjust based on dimension of embedding
+        dimension = embedding_size  # adjust based on dimension of embedding
         index = faiss.IndexFlatL2(dimension)  # L2 metric for similarity search
         index.metadata_store = {} # used later to store documents & metadata
         return index
@@ -114,44 +117,58 @@ def query_db(query, collection, db_type, model):
 
     return response['response']
 
+def insert_query(db_type, chunk_size, overlap, tokenizer_name, model, question):
+    coll = load_collection('ds4300_practical02', db_type, tokenizer_name)
+    insert_folder(coll, 'pdf_files', tokenizer_name,
+                  chunk_size, overlap, db_type)
+
+    response = query_db([question], coll, db_type, model)  # question needs to be inside a list
+    return response
+
+
 def main():
     # example usage
-    db_type = 'faiss' # can be chroma, redis, faiss (caps insensitive)
-    # I have confirmed that redis works, but since it needs docker it is very computationally taxing
-    # this means that it is unfortunately not feasible to use normally
+    # db_type = 'faiss' # can be chroma, redis, faiss (caps insensitive)
+    # # I have confirmed that redis works, but since it needs docker it is very computationally taxing
+    # # this means that it is unfortunately not feasible to use normally
+    #
+    # # collection name needs to be exact for redis I think
+    # coll = load_collection('ds4300_practical02', db_type)
+    # insert_folder(coll, 'pdf_files', 'sentence-transformers/all-MiniLM-L6-v2',
+    #                       200, 10, db_type)
+    #
+    # questions = [ # from march20 inclass, decent set of testing questions
+    #     'What is the difference between a list where memory is contiguously allocated and a list where linked structures are used?',
+    #     'When are linked lists faster than contiguously-allocated lists?',
+    #     'Given an AVL tree with the numbers 30, 25, 35, and 20, what imbalance case is caused by inserting 23?',
+    #     'Why is a B+ Tree a better than an AVL tree when indexing a large dataset?',
+    #     'What is disk-based indexing and why is it important for database systems?',
+    #     'In the context of a relational database system, what is a transaction?',
+    #     'Succinctly describe the four components of ACID compliant transactions.',
+    #     'Why does the CAP principle not make sense when applied to a single-node MongoDB instance?',
+    #     'Describe the differences between horizontal and vertical scaling.',
+    #     'Briefly describe how a key/value store can be used as a feature store.',
+    #     'When was Redis originally released?',
+    #     'In Redis, what is the difference between the INC and INCR commands?',
+    #     'What are the benefits of BSON over JSON in MongoDB?',
+    #     'Write a Mongo query based on the movies data set that returns the titles of all movies released between 2010 and 2015 from the suspense genre?',
+    #     'What does the $nin operator mean in a Mongo query?'
+    # ]
+    #
+    # model = 'llama2' # llama2, mistral7, llama3.1 etc
+    # responses = []
+    # for i, question in enumerate(questions[:1]): # remove index to test all
+    #     response = query_db([question], coll, db_type, model) # question needs to be inside a list
+    #     print(f'{i}: {response}')
+    #     responses.append(response)
+    #
+    # with open('mar20_inclass_answers.txt', 'w') as f:
+    #     f.writelines(responses)
 
-    # collection name needs to be exact for redis I think
-    coll = load_collection('ds4300_practical02', db_type)
-    insert_folder(coll, 'pdf_files', 'sentence-transformers/all-MiniLM-L6-v2',
-                          200, 10, db_type)
-
-    questions = [ # from march20 inclass, decent set of testing questions
-        'What is the difference between a list where memory is contiguously allocated and a list where linked structures are used?',
-        'When are linked lists faster than contiguously-allocated lists?',
-        'Given an AVL tree with the numbers 30, 25, 35, and 20, what imbalance case is caused by inserting 23?',
-        'Why is a B+ Tree a better than an AVL tree when indexing a large dataset?',
-        'What is disk-based indexing and why is it important for database systems?',
-        'In the context of a relational database system, what is a transaction?',
-        'Succinctly describe the four components of ACID compliant transactions.',
-        'Why does the CAP principle not make sense when applied to a single-node MongoDB instance?',
-        'Describe the differences between horizontal and vertical scaling.',
-        'Briefly describe how a key/value store can be used as a feature store.',
-        'When was Redis originally released?',
-        'In Redis, what is the difference between the INC and INCR commands?',
-        'What are the benefits of BSON over JSON in MongoDB?',
-        'Write a Mongo query based on the movies data set that returns the titles of all movies released between 2010 and 2015 from the suspense genre?',
-        'What does the $nin operator mean in a Mongo query?'
-    ]
-
-    model = 'llama2' # llama2, mistral7, llama3.1 etc
-    responses = []
-    for i, question in enumerate(questions[:1]): # remove index to test all
-        response = query_db([question], coll, db_type, model) # question needs to be inside a list
-        print(f'{i}: {response}')
-        responses.append(response)
-
-    with open('mar20_inclass_answers.txt', 'w') as f:
-        f.writelines(responses)
+    r = insert_query('chroma', 200, 10,
+                 'sentence-transformers/all-MiniLM-L6-v2', 'mistral',
+                 'What are the benefits of BSON over JSON in MongoDB?')
+    print(r)
 
 if __name__ == '__main__':
     main()
