@@ -6,5 +6,4 @@ chromadb
 ollama
 redis
 faiss-cpu
-preprocess
 psutil

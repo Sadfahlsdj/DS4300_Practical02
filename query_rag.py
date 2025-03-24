@@ -24,6 +24,7 @@ def main():
         if question.lower() == 'q':
             break
 
+        print(f'{question}-----------------\n')
         r_raw = query_db([question], coll, db, model)
         response = r_raw + '\n------------------------------------\n'
         print(response)
